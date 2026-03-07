@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code
+.vscode/
+
+# logs
+*.log
+
+# build outputs
+build/
+dist/
+
+# Arduino compiled files
+*.elf
+*.hex
+*.bin
