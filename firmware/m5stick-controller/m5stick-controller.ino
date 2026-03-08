@@ -6,7 +6,7 @@ const int PIR_PIN = 26;
 // State variables
 volatile bool motionDetected = false;
 
-// This function runs INSTANTLY when G26 goes HIGH
+// ISR runs in IRAM for maximum speed
 void IRAM_ATTR motionISR() {
   motionDetected = true;
 }
@@ -15,41 +15,49 @@ void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
 
-  // Setup Screen
-  M5.Lcd.setRotation(1);
+  // Screen Setup for Plus2 (Landscape)
+  M5.Lcd.setRotation(1); 
   M5.Lcd.fillScreen(BLACK);
+  
+  // Set text size to 2 (Clean and readable on 240x320)
   M5.Lcd.setTextSize(2);
   M5.Lcd.setCursor(10, 10);
-  M5.Lcd.println("PIR SCANNER READY");
+  M5.Lcd.println("SYSTEM: ARMED");
 
-  // Setup PIR Pin with Interrupt
+  // Setup PIR Pin with Internal Pulldown
   pinMode(PIR_PIN, INPUT_PULLDOWN); 
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), motionISR, RISING);
 
+  // Initialize Serial for Camera Trigger
   Serial.begin(115200);
 }
 
 void loop() {
   if (motionDetected) {
-    // 1. Notify Serial (Future Camera Trigger)
+    // 1. Send the Trigger to the Camera
     Serial.println("CAPTURE");
 
-    // 2. Visual Alert
+    // 2. High-Alert Visual
     M5.Lcd.fillScreen(RED);
     M5.Lcd.setTextColor(WHITE);
-    M5.Lcd.drawCenterString("MOTION DETECTED", 120, 60, 4);
+    // drawCenterString(text, x, y, font_number)
+    // Font 4 is a decent "Impact" font that fits the Plus2 width
+    M5.Lcd.drawCenterString("MOTION", 160, 60, 4);
+    M5.Lcd.drawCenterString("DETECTED", 160, 100, 4);
 
-    // 3. Audio Alert (700Hz for 100ms)
-    M5.Speaker.tone(700, 100);
+    // 3. Max Volume Alert
+    // 4000Hz is a piercing "Smoke Alarm" style frequency
+    M5.Speaker.tone(4000, 500); 
 
-    // 4. Hold state for a moment so we can see it
+    // 4. Stay Red for 2 seconds
     delay(2000); 
 
-    // Reset for next trigger
+    // 5. Reset to Idle
     motionDetected = false;
     M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.drawCenterString("SCANNING...", 120, 60, 4);
+    M5.Lcd.setTextColor(GREEN);
+    M5.Lcd.drawCenterString("SCANNING...", 160, 100, 2);
   }
   
-  M5.update(); // Handle button presses etc
+  M5.update(); 
 }
