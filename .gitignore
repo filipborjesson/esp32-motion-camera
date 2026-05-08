@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+server/.venv/
 
 # OS files
 .DS_Store
@@ -11,6 +12,9 @@ Thumbs.db
 
 # logs
 *.log
+server/instance/
+server/uploads/
+.env
 
 # build outputs
 build/

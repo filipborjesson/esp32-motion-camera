@@ -1,0 +1,17 @@
+[Unit]
+Description=ESP32 Motion Camera Cloud Backend
+After=network.target
+
+[Service]
+User=YOUR_VM_USER
+WorkingDirectory=/home/YOUR_VM_USER/esp32-motion-camera/server
+Environment="DASHBOARD_USERNAME=admin"
+Environment="DASHBOARD_PASSWORD=replace-with-strong-password"
+Environment="DEVICE_API_KEY=replace-with-device-api-key"
+Environment="PORT=5001"
+ExecStart=/home/YOUR_VM_USER/esp32-motion-camera/server/.venv/bin/python app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

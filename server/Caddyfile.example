@@ -1,0 +1,5 @@
+# Replace camera.voiceassistant.stream with your chosen host.
+# This can be a new subdomain on the same domain you already bought.
+camera.voiceassistant.stream {
+    reverse_proxy localhost:5001
+}

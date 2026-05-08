@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Security Node Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111419;
+      --panel: #1b2028;
+      --panel-2: #242b35;
+      --text: #eef3f8;
+      --muted: #9aa7b6;
+      --line: #303946;
+      --accent: #ffd44d;
+      --ok: #4ade80;
+      --bad: #fb7185;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      background: #151922;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0;
+      font-weight: 700;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .metric, .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .metric {
+      padding: 14px;
+      min-height: 82px;
+    }
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .value {
+      font-size: 28px;
+      font-weight: 750;
+      margin-top: 8px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      margin: 18px 0;
+    }
+    button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 10px 12px;
+      cursor: pointer;
+      font-weight: 650;
+    }
+    button.primary { border-color: #6d5f2e; background: #3a321a; color: var(--accent); }
+    button.danger { border-color: #67313d; background: #341821; color: #fecdd3; }
+    .panel { overflow: hidden; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+    }
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      background: #171c24;
+    }
+    img.thumb {
+      width: 96px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #0c0f14;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #2c3440;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .pill.ok { color: var(--ok); }
+    .pill.bad { color: var(--bad); }
+    @media (max-width: 760px) {
+      header, main { padding-left: 14px; padding-right: 14px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      table { min-width: 860px; }
+      .panel { overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Security Node Dashboard</h1>
+    <span class="pill" id="server-status">Loading</span>
+  </header>
+  <main>
+    <section class="grid">
+      <div class="metric"><div class="label">Events</div><div class="value" id="total-events">0</div></div>
+      <div class="metric"><div class="label">Triggers</div><div class="value" id="triggers">0</div></div>
+      <div class="metric"><div class="label">Ignored</div><div class="value" id="ignored">0</div></div>
+      <div class="metric"><div class="label">Images Sent</div><div class="value" id="sent-images">0</div></div>
+    </section>
+
+    <div class="toolbar">
+      <div>
+        <button class="primary" data-command="arm">Arm</button>
+        <button data-command="disarm">Disarm</button>
+        <button data-command="capture_now">Capture Now</button>
+        <button class="danger" data-command="siren">Siren</button>
+      </div>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Device</th>
+            <th>Mode</th>
+            <th>Event</th>
+            <th>Image</th>
+            <th>AI Result</th>
+            <th>Counts</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="events"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script>
+    const fmt = new Intl.DateTimeFormat(undefined, {
+      month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit"
+    });
+
+    function setText(id, value) {
+      document.getElementById(id).textContent = value ?? "0";
+    }
+
+    async function loadStatus() {
+      const res = await fetch("/api/security/status");
+      const data = await res.json();
+      setText("total-events", data.stats.total_events);
+      setText("triggers", data.stats.triggers);
+      setText("ignored", data.stats.ignored);
+      setText("sent-images", data.stats.sent_images);
+      const status = document.getElementById("server-status");
+      status.textContent = data.devices.length ? `${data.devices.length} device online/recent` : "No device heartbeat";
+      status.className = `pill ${data.devices.length ? "ok" : "bad"}`;
+    }
+
+    async function loadEvents() {
+      const res = await fetch("/api/security/events?limit=50");
+      const events = await res.json();
+      const tbody = document.getElementById("events");
+      tbody.innerHTML = events.map(event => {
+        const ai = event.classification
+          ? `${event.classification}${event.confidence ? ` ${(event.confidence * 100).toFixed(1)}%` : ""}`
+          : "none";
+        return `
+          <tr>
+            <td>${fmt.format(new Date(event.created_ms))}</td>
+            <td>${event.device_id}</td>
+            <td><span class="pill">${event.mode || "unknown"}</span></td>
+            <td>${event.event_type}</td>
+            <td>${event.image_url ? `<img class="thumb" src="${event.image_url}" alt="capture">` : ""}</td>
+            <td>${ai}</td>
+            <td>${event.trigger_count || 0} / ${event.ignored_count || 0} / ${event.sent_image_count || 0}</td>
+            <td>${event.acknowledged ? `<span class="pill ok">Acked</span>` : `<button data-ack="${event.id}">Ack</button>`}</td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    async function refresh() {
+      await Promise.all([loadStatus(), loadEvents()]);
+    }
+
+    document.addEventListener("click", async (event) => {
+      const command = event.target.dataset.command;
+      const ack = event.target.dataset.ack;
+      if (command) {
+        await fetch("/api/security/commands", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({device_id: "stick-s3-01", command})
+        });
+        await refresh();
+      }
+      if (ack) {
+        await fetch(`/api/security/events/${ack}/ack`, {method: "POST"});
+        await refresh();
+      }
+    });
+
+    document.getElementById("refresh").addEventListener("click", refresh);
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
