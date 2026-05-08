@@ -1,7 +1,17 @@
-#include <M5StickCPlus2.h>
+#include <M5Unified.h>
 
-// Pin Definitions
-const int PIR_PIN = 26; 
+// StickS3 pin definitions.
+// Hat2 bus: G5 = PIR input, G7/G8 = camera UART.
+constexpr int PIR_PIN = 5;
+constexpr int CAMERA_TX_PIN = 7;
+constexpr int CAMERA_RX_PIN = 8;
+constexpr uint32_t CAMERA_BAUD = 115200;
+
+// The current ESP32-CAM test sketch listens for 'P'.
+// Change to "CAPTURE" once the camera firmware consumes that command.
+constexpr const char *CAMERA_TRIGGER_COMMAND = "P";
+
+HardwareSerial CameraSerial(1);
 
 // State variables
 volatile bool motionDetected = false;
@@ -15,11 +25,15 @@ void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
 
-  // Screen Setup for Plus2 (Landscape)
+  // StickS3 disables external 5V by default after M5.begin().
+  // Enable it so the Hat2 EXT_5V rail can power the PIR and ESP32-CAM.
+  M5.Power.setExtOutput(true);
+
+  // Screen setup in landscape.
   M5.Lcd.setRotation(1); 
   M5.Lcd.fillScreen(BLACK);
   
-  // Set text size to 2 (Clean and readable on 240x320)
+  // Set text size to 2.
   M5.Lcd.setTextSize(2);
   M5.Lcd.setCursor(10, 10);
   M5.Lcd.println("SYSTEM: ARMED");
@@ -28,22 +42,25 @@ void setup() {
   pinMode(PIR_PIN, INPUT_PULLDOWN); 
   attachInterrupt(digitalPinToInterrupt(PIR_PIN), motionISR, RISING);
 
-  // Initialize Serial for Camera Trigger
+  // Initialize USB serial for debugging and UART1 for the camera trigger.
   Serial.begin(115200);
+  CameraSerial.begin(CAMERA_BAUD, SERIAL_8N1, CAMERA_RX_PIN, CAMERA_TX_PIN);
 }
 
 void loop() {
   if (motionDetected) {
     // 1. Send the Trigger to the Camera
-    Serial.println("CAPTURE");
+    CameraSerial.println(CAMERA_TRIGGER_COMMAND);
+    Serial.println("Motion detected; camera trigger sent.");
 
     // 2. High-Alert Visual
     M5.Lcd.fillScreen(RED);
     M5.Lcd.setTextColor(WHITE);
     // drawCenterString(text, x, y, font_number)
-    // Font 4 is a decent "Impact" font that fits the Plus2 width
-    M5.Lcd.drawCenterString("MOTION", 160, 60, 4);
-    M5.Lcd.drawCenterString("DETECTED", 160, 100, 4);
+    // Center using actual display dimensions so this works across Stick models.
+    const int centerX = M5.Lcd.width() / 2;
+    M5.Lcd.drawCenterString("MOTION", centerX, 45, 4);
+    M5.Lcd.drawCenterString("DETECTED", centerX, 85, 4);
 
     // 3. Max Volume Alert
     // 4000Hz is a piercing "Smoke Alarm" style frequency
@@ -56,7 +73,7 @@ void loop() {
     motionDetected = false;
     M5.Lcd.fillScreen(BLACK);
     M5.Lcd.setTextColor(GREEN);
-    M5.Lcd.drawCenterString("SCANNING...", 160, 100, 2);
+    M5.Lcd.drawCenterString("SCANNING...", M5.Lcd.width() / 2, 80, 2);
   }
   
   M5.update(); 
