@@ -12,6 +12,14 @@ Looking at the front of the HC-SR501 with pins facing down:
 | Center | OUT | M5StickS3 G5. |
 | Right | GND | Shared ground rail. |
 
+For the standalone ESP32-CAM bring-up test, ignore the M5StickS3 and wire the PIR directly:
+
+| PIR Pin | ESP32-CAM Connection |
+|:---|:---|
+| VCC | 5V |
+| OUT | GPIO13 |
+| GND | GND |
+
 ## Signal Logic
 
 When infrared energy changes, the PIR output goes high. The controller sketch configures M5StickS3 G5 as `INPUT_PULLDOWN` and attaches a rising-edge interrupt, so low means idle and high means motion.

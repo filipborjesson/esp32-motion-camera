@@ -41,6 +41,16 @@ The ESP32-CAM has a cramped pin map. Avoid these for external signals:
 | GPIO12, GPIO13, GPIO14, GPIO15 | Used by the microSD slot. |
 | GPIO33 | Onboard red status LED, active low. |
 
+## Standalone PIR Bring-Up Exception
+
+For the standalone PIR-to-ESP32-CAM bring-up test, the PIR signal uses GPIO13:
+
+```text
+HC-SR501 OUT -> ESP32-CAM GPIO13
+```
+
+This is acceptable only because the bring-up sketch does not use the microSD card. GPIO13 is one of the SD-card lines, so move the PIR signal or remove SD-card usage before combining PIR input with microSD storage.
+
 ## Programming Checklist
 
 1. Bridge ESP32-CAM IO0 to GND.
