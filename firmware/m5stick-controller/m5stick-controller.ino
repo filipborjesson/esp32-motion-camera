@@ -1,24 +1,282 @@
 #include <M5Unified.h>
 
-// StickS3 pin definitions.
-// Hat2 bus: G5 = PIR input, G7/G8 = camera UART.
+// StickS3 Hat2 bus wiring.
+// PIR OUT -> G5
+// StickS3 G7/TX -> ESP32-CAM U0R/GPIO3
+// StickS3 G8/RX -> ESP32-CAM U0T/GPIO1
 constexpr int PIR_PIN = 5;
 constexpr int CAMERA_TX_PIN = 7;
 constexpr int CAMERA_RX_PIN = 8;
 constexpr uint32_t CAMERA_BAUD = 115200;
 
-// The current ESP32-CAM test sketch listens for 'P'.
-// Change to "CAPTURE" once the camera firmware consumes that command.
-constexpr const char *CAMERA_TRIGGER_COMMAND = "P";
+constexpr unsigned long PIR_STABLE_HIGH_MS = 250;
+constexpr unsigned long EVENT_COOLDOWN_MS = 5000;
+constexpr unsigned long ALARM_BEEP_INTERVAL_MS = 900;
+constexpr unsigned long SCREEN_FLASH_INTERVAL_MS = 350;
+constexpr unsigned long STATUS_REFRESH_INTERVAL_MS = 500;
+constexpr unsigned long CAMERA_RESPONSE_TIMEOUT_MS = 3000;
+
+constexpr const char *DEVICE_ID = "stick-s3-01";
+constexpr const char *CAPTURE_COMMAND = "CAPTURE";
 
 HardwareSerial CameraSerial(1);
 
-// State variables
-volatile bool motionDetected = false;
+enum class SystemMode {
+  Armed,
+  AlarmTripped,
+  Disarmed,
+  Cooldown,
+  CameraError
+};
 
-// ISR runs in IRAM for maximum speed
-void IRAM_ATTR motionISR() {
-  motionDetected = true;
+SystemMode mode = SystemMode::Armed;
+
+bool lastPirLevel = false;
+bool highCandidateActive = false;
+bool flashOn = false;
+bool waitingForCamera = false;
+bool hasAcceptedEvent = false;
+
+unsigned long highCandidateStartMs = 0;
+unsigned long lastAcceptedEventMs = 0;
+unsigned long alarmStartedMs = 0;
+unsigned long lastBeepMs = 0;
+unsigned long lastFlashMs = 0;
+unsigned long lastStatusDrawMs = 0;
+unsigned long cameraCommandSentMs = 0;
+
+unsigned long triggerCount = 0;
+unsigned long ignoredCount = 0;
+unsigned long captureCommandCount = 0;
+unsigned long cameraOkCount = 0;
+unsigned long cameraFailCount = 0;
+
+String cameraLine;
+String lastAction = "Booting";
+
+const char *modeName(SystemMode currentMode) {
+  switch (currentMode) {
+    case SystemMode::Armed:
+      return "ARMED";
+    case SystemMode::AlarmTripped:
+      return "ALARM";
+    case SystemMode::Disarmed:
+      return "DISARMED";
+    case SystemMode::Cooldown:
+      return "COOLDOWN";
+    case SystemMode::CameraError:
+      return "CAM ERROR";
+  }
+  return "UNKNOWN";
+}
+
+uint16_t modeColor(SystemMode currentMode) {
+  switch (currentMode) {
+    case SystemMode::Armed:
+      return DARKGREEN;
+    case SystemMode::AlarmTripped:
+      return flashOn ? YELLOW : ORANGE;
+    case SystemMode::Disarmed:
+      return DARKGREY;
+    case SystemMode::Cooldown:
+      return NAVY;
+    case SystemMode::CameraError:
+      return MAROON;
+  }
+  return BLACK;
+}
+
+void drawStatus(bool force = false) {
+  unsigned long nowMs = millis();
+  if (!force && nowMs - lastStatusDrawMs < STATUS_REFRESH_INTERVAL_MS) {
+    return;
+  }
+  lastStatusDrawMs = nowMs;
+
+  M5.Display.fillScreen(modeColor(mode));
+  M5.Display.setTextColor(WHITE);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(8, 8);
+  M5.Display.printf("Mode: %s\n", modeName(mode));
+
+  M5.Display.setTextSize(1);
+  M5.Display.setCursor(8, 42);
+  M5.Display.printf("Device: %s\n", DEVICE_ID);
+  M5.Display.printf("Triggers: %lu\n", triggerCount);
+  M5.Display.printf("Ignored:  %lu\n", ignoredCount);
+  M5.Display.printf("Capture commands: %lu\n", captureCommandCount);
+  M5.Display.printf("Camera OK/Fail: %lu/%lu\n", cameraOkCount, cameraFailCount);
+  M5.Display.printf("Last: %s\n", lastAction.c_str());
+
+  M5.Display.setCursor(8, M5.Display.height() - 28);
+  if (mode == SystemMode::AlarmTripped) {
+    M5.Display.println("BtnA: disarm");
+  } else if (mode == SystemMode::Disarmed) {
+    M5.Display.println("BtnB: arm");
+  } else {
+    M5.Display.println("BtnA disarm | BtnB arm");
+  }
+}
+
+void enterMode(SystemMode nextMode, const String &action) {
+  mode = nextMode;
+  lastAction = action;
+  flashOn = false;
+
+  if (mode == SystemMode::AlarmTripped) {
+    alarmStartedMs = millis();
+    lastBeepMs = 0;
+    lastFlashMs = 0;
+  }
+
+  drawStatus(true);
+  Serial.printf("MODE: %s action=%s\n", modeName(mode), lastAction.c_str());
+}
+
+void sendCameraCaptureCommand() {
+  captureCommandCount++;
+  waitingForCamera = true;
+  cameraCommandSentMs = millis();
+  cameraLine = "";
+
+  CameraSerial.printf("%s:%lu\n", CAPTURE_COMMAND, triggerCount);
+  Serial.printf("CAMERA_TX: %s:%lu\n", CAPTURE_COMMAND, triggerCount);
+}
+
+void handleAcceptedMotion(unsigned long nowMs) {
+  triggerCount++;
+  lastAcceptedEventMs = nowMs;
+  hasAcceptedEvent = true;
+
+  enterMode(SystemMode::AlarmTripped, "Motion accepted");
+  sendCameraCaptureCommand();
+}
+
+void handleIgnoredMotion(const char *reason) {
+  ignoredCount++;
+  lastAction = String("Ignored: ") + reason;
+  Serial.printf("PIR_IGNORED: ignored=%lu reason=%s\n", ignoredCount, reason);
+  drawStatus(true);
+}
+
+void pollPir() {
+  if (mode == SystemMode::Disarmed) {
+    lastPirLevel = digitalRead(PIR_PIN) == HIGH;
+    highCandidateActive = false;
+    return;
+  }
+
+  unsigned long nowMs = millis();
+  bool pirLevel = digitalRead(PIR_PIN) == HIGH;
+
+  if (pirLevel && !lastPirLevel) {
+    highCandidateActive = true;
+    highCandidateStartMs = nowMs;
+    Serial.println("PIR_EDGE: rising edge candidate.");
+  }
+
+  if (!pirLevel) {
+    highCandidateActive = false;
+  }
+
+  if (highCandidateActive && pirLevel && nowMs - highCandidateStartMs >= PIR_STABLE_HIGH_MS) {
+    highCandidateActive = false;
+
+    if (nowMs - lastAcceptedEventMs < EVENT_COOLDOWN_MS) {
+      handleIgnoredMotion("cooldown");
+    } else {
+      handleAcceptedMotion(nowMs);
+    }
+  }
+
+  lastPirLevel = pirLevel;
+}
+
+void pollCameraSerial() {
+  while (CameraSerial.available()) {
+    char ch = static_cast<char>(CameraSerial.read());
+    if (ch == '\n' || ch == '\r') {
+      cameraLine.trim();
+      if (cameraLine.length() > 0) {
+        Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
+
+        if (cameraLine.indexOf("CAPTURE_OK") >= 0 || cameraLine.indexOf("UPLOAD_OK") >= 0) {
+          cameraOkCount++;
+          waitingForCamera = false;
+          lastAction = cameraLine;
+          drawStatus(true);
+        } else if (cameraLine.indexOf("FAIL") >= 0 || cameraLine.indexOf("ERROR") >= 0) {
+          cameraFailCount++;
+          waitingForCamera = false;
+          enterMode(SystemMode::CameraError, cameraLine);
+        } else {
+          lastAction = cameraLine;
+          drawStatus(true);
+        }
+      }
+      cameraLine = "";
+    } else if (cameraLine.length() < 96) {
+      cameraLine += ch;
+    }
+  }
+
+  if (waitingForCamera && millis() - cameraCommandSentMs > CAMERA_RESPONSE_TIMEOUT_MS) {
+    waitingForCamera = false;
+    cameraFailCount++;
+    lastAction = "Camera timeout";
+    Serial.println("CAMERA_TIMEOUT");
+    drawStatus(true);
+  }
+}
+
+void updateAlarmPresentation() {
+  if (mode != SystemMode::AlarmTripped) {
+    return;
+  }
+
+  unsigned long nowMs = millis();
+
+  if (nowMs - lastFlashMs >= SCREEN_FLASH_INTERVAL_MS) {
+    flashOn = !flashOn;
+    lastFlashMs = nowMs;
+    drawStatus(true);
+  }
+
+  if (nowMs - lastBeepMs >= ALARM_BEEP_INTERVAL_MS) {
+    lastBeepMs = nowMs;
+    M5.Speaker.tone(520, 140);
+  }
+}
+
+void updateCooldown() {
+  if (mode == SystemMode::AlarmTripped || mode == SystemMode::CameraError) {
+    return;
+  }
+
+  if (hasAcceptedEvent && mode == SystemMode::Armed && millis() - lastAcceptedEventMs < EVENT_COOLDOWN_MS) {
+    mode = SystemMode::Cooldown;
+    drawStatus(true);
+  }
+
+  if (hasAcceptedEvent && mode == SystemMode::Cooldown && millis() - lastAcceptedEventMs >= EVENT_COOLDOWN_MS) {
+    enterMode(SystemMode::Armed, "Ready");
+  }
+}
+
+void handleButtons() {
+  if (M5.BtnA.wasPressed()) {
+    waitingForCamera = false;
+    enterMode(SystemMode::Disarmed, "Disarmed by BtnA");
+    M5.Speaker.tone(260, 120);
+  }
+
+  if (M5.BtnB.wasPressed()) {
+    waitingForCamera = false;
+    lastAcceptedEventMs = 0;
+    hasAcceptedEvent = false;
+    enterMode(SystemMode::Armed, "Armed by BtnB");
+    M5.Speaker.tone(880, 120);
+  }
 }
 
 void setup() {
@@ -29,52 +287,32 @@ void setup() {
   // Enable it so the Hat2 EXT_5V rail can power the PIR and ESP32-CAM.
   M5.Power.setExtOutput(true);
 
-  // Screen setup in landscape.
-  M5.Lcd.setRotation(1); 
-  M5.Lcd.fillScreen(BLACK);
-  
-  // Set text size to 2.
-  M5.Lcd.setTextSize(2);
-  M5.Lcd.setCursor(10, 10);
-  M5.Lcd.println("SYSTEM: ARMED");
+  M5.Display.setRotation(1);
+  M5.Display.setTextSize(1);
+  M5.Speaker.setVolume(96);
 
-  // Setup PIR Pin with Internal Pulldown
-  pinMode(PIR_PIN, INPUT_PULLDOWN); 
-  attachInterrupt(digitalPinToInterrupt(PIR_PIN), motionISR, RISING);
-
-  // Initialize USB serial for debugging and UART1 for the camera trigger.
   Serial.begin(115200);
   CameraSerial.begin(CAMERA_BAUD, SERIAL_8N1, CAMERA_RX_PIN, CAMERA_TX_PIN);
+
+  pinMode(PIR_PIN, INPUT_PULLDOWN);
+
+  Serial.println();
+  Serial.println("--- StickS3 Motion Assistant ---");
+  Serial.println("PIR OUT -> G5, camera UART TX/RX -> G7/G8.");
+  Serial.println("BtnA disarms. BtnB arms.");
+
+  enterMode(SystemMode::Armed, "Ready");
 }
 
 void loop() {
-  if (motionDetected) {
-    // 1. Send the Trigger to the Camera
-    CameraSerial.println(CAMERA_TRIGGER_COMMAND);
-    Serial.println("Motion detected; camera trigger sent.");
+  M5.update();
 
-    // 2. High-Alert Visual
-    M5.Lcd.fillScreen(RED);
-    M5.Lcd.setTextColor(WHITE);
-    // drawCenterString(text, x, y, font_number)
-    // Center using actual display dimensions so this works across Stick models.
-    const int centerX = M5.Lcd.width() / 2;
-    M5.Lcd.drawCenterString("MOTION", centerX, 45, 4);
-    M5.Lcd.drawCenterString("DETECTED", centerX, 85, 4);
+  handleButtons();
+  pollPir();
+  pollCameraSerial();
+  updateAlarmPresentation();
+  updateCooldown();
+  drawStatus();
 
-    // 3. Max Volume Alert
-    // 4000Hz is a piercing "Smoke Alarm" style frequency
-    M5.Speaker.tone(4000, 500); 
-
-    // 4. Stay Red for 2 seconds
-    delay(2000); 
-
-    // 5. Reset to Idle
-    motionDetected = false;
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setTextColor(GREEN);
-    M5.Lcd.drawCenterString("SCANNING...", M5.Lcd.width() / 2, 80, 2);
-  }
-  
-  M5.update(); 
+  delay(10);
 }
