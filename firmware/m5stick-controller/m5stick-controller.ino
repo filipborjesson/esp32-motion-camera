@@ -2,8 +2,8 @@
 
 // StickS3 Hat2 bus wiring.
 // PIR OUT -> G5
-// StickS3 G7/TX -> ESP32-CAM U0R/GPIO3
-// StickS3 G8/RX -> ESP32-CAM U0T/GPIO1
+// ESP32-CAM U0T/GPIO1 -> resistor -> StickS3 G8/RX
+// StickS3 G7/TX -> ESP32-CAM U0R/GPIO3 (optional command path)
 constexpr int PIR_PIN = 5;
 constexpr int CAMERA_TX_PIN = 7;
 constexpr int CAMERA_RX_PIN = 8;
@@ -315,7 +315,7 @@ void setup() {
 
   Serial.println();
   Serial.println("--- StickS3 Motion Assistant ---");
-  Serial.println("PIR OUT -> G5, camera UART TX/RX -> G7/G8.");
+  Serial.println("Camera U0T -> resistor -> G8/RX; optional G7/TX -> camera U0R.");
   Serial.println("BtnA disarms. BtnB arms.");
 
   enterMode(SystemMode::Armed, "Ready");
