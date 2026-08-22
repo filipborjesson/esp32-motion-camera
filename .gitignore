@@ -24,3 +24,6 @@ dist/
 *.elf
 *.hex
 *.bin
+
+# Local ESP32-CAM network credentials
+firmware/esp32-cam/camera_secrets.h

@@ -79,10 +79,24 @@ EVENT_DONE: trigger=1 captured=true ignored=0 total_captures=1
 
 ## Next Step After This Works
 
-After this standalone test works, the next implementation should add Wi-Fi upload from the ESP32-CAM to:
+The next firmware phase adds Wi-Fi upload from the ESP32-CAM to:
 
 ```text
 POST /api/device/security/images
 ```
 
-That will let the ESP32-CAM do the heavy image work while the M5StickS3 remains the assistant/controller.
+The upload is implemented in `firmware/esp32-cam/esp32-cam.ino`. Copy
+`camera_secrets.h.example` to `camera_secrets.h`, then configure the 2.4 GHz
+Wi-Fi credentials, the Flask server's LAN IPv4 address, and the same
+`DEVICE_API_KEY` used by the server. The local secrets file is ignored by Git.
+
+This first upload test uses plain HTTP on the local network. Run Flask on a
+laptop or Raspberry Pi reachable by the ESP32-CAM; do not use `localhost` as
+the camera's server host. If configuration, Wi-Fi, or the server is unavailable,
+the firmware continues PIR detection, flash, capture, and UART notification.
+Successful uploads report `UPLOAD_OK`; network/server errors report
+`UPLOAD_FAIL` or `UPLOAD_SKIPPED`.
+
+That lets the ESP32-CAM do the image work while the M5StickS3 remains the local
+assistant/controller. HTTPS and model inference should be added after repeated
+local uploads are reliable.
