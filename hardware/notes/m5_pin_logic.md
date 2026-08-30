@@ -8,9 +8,8 @@ This document explains the hardware interaction between the M5StickS3 and the ex
 |:---|:---|:---|
 | 5V / EXT_5V | Power output | Powers the PIR and ESP32-CAM through the breadboard 5V rail. |
 | GND | Ground | Common return path for all components. |
-| G5 | Digital input | PIR trigger input. Goes high when motion is detected. |
-| G7 | UART TX | Sends the trigger command to the ESP32-CAM. |
-| G8 | UART RX | Receives optional status from the ESP32-CAM. |
+| G8 | UART RX | Receives ESP32-CAM status output through the installed resistor. |
+| G7 | UART TX | Reserved for the later command path to the ESP32-CAM. |
 
 ## How the Pins Work in This Circuit
 
@@ -22,26 +21,26 @@ The M5StickS3 can provide external 5V through the Grove/Hat power rail, but M5Un
 M5.Power.setExtOutput(true);
 ```
 
-Without that call, the PIR and ESP32-CAM may not receive power from the StickS3 external 5V rail.
+Without that call, external devices may not receive power from the StickS3 external 5V rail.
 
 When `EXT_5V` is configured as output, power the StickS3 from USB-C or `5VIN`. Do not feed external 5V back into `EXT_5V` or the Grove 5V pin while output mode is enabled.
 
-### 2. Motion Trigger on G5
+### 2. Current Test: Camera-Owned PIR
 
-The PIR sensor output connects to G5 on the Hat2 bus. The firmware configures this pin as `INPUT_PULLDOWN` and watches for a rising edge. The HC-SR501 output is treated as normal logic: low means idle, high means motion.
+In the current integration test, the PIR sensor output connects directly to ESP32-CAM GPIO13. The ESP32-CAM owns motion detection, camera capture, and optional image upload. The StickS3 listens for ESP32-CAM status lines and turns those into local alarm behavior.
 
-### 3. Camera UART on G7/G8
+### 3. Camera UART on G8/G7
 
-The StickS3 Hat2 header gives us enough exposed GPIO to keep the full security-camera wiring on the top connector. This project uses G7 and G8 for the camera UART.
+The StickS3 Hat2 header gives us enough exposed GPIO for a UART status link. The current test uses G8 as StickS3 RX.
 
 Use this crossover wiring:
 
 | M5StickS3 | ESP32-CAM | Purpose |
 |:---|:---|:---|
-| G7 / TX | U0R / GPIO3 | M5StickS3 sends trigger commands. |
-| G8 / RX | U0T / GPIO1 | ESP32-CAM can send status back. |
+| G8 / RX | U0T / GPIO1 | ESP32-CAM sends status/log lines through the installed resistor. |
+| G7 / TX | U0R / GPIO3 | Optional future command path from StickS3 to ESP32-CAM. |
 
-The firmware uses `Serial1` for this camera link so USB `Serial` can remain available for debugging.
+The StickS3 firmware uses `Serial1` for this camera link so USB `Serial` can remain available for debugging. The current baud rate is `9600`.
 
 ## Hardware Notes
 
@@ -56,4 +55,4 @@ G5  G4  G6  G7  G43  G44  G2  G3
 GND EXT_5V G0  G1  G8   BAT  3V3 5VIN
 ```
 
-The current assignment uses `G5`, `G7`, `G8`, `GND`, and `EXT_5V`. Avoid `G6` for this project because it is adjacent to the Boot signal in the Hat2 map, and avoid `G43/G44` unless you have confirmed they are not needed by your upload/debug path.
+The current integration test uses `G8` and `GND` for ESP32-CAM-to-StickS3 status. `G7` is reserved for a future command path, and `G5` is reserved for a later version where the StickS3 owns the PIR input.

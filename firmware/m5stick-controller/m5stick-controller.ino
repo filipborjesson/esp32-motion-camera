@@ -1,13 +1,11 @@
 #include <M5Unified.h>
 
 // StickS3 Hat2 bus wiring.
-// PIR OUT -> G5
 // ESP32-CAM U0T/GPIO1 -> resistor -> StickS3 G8/RX
 // StickS3 G7/TX -> ESP32-CAM U0R/GPIO3 (optional command path)
-constexpr int PIR_PIN = 5;
 constexpr int CAMERA_TX_PIN = 7;
 constexpr int CAMERA_RX_PIN = 8;
-constexpr uint32_t CAMERA_BAUD = 115200;
+constexpr uint32_t CAMERA_BAUD = 9600;
 
 constexpr unsigned long PIR_STABLE_HIGH_MS = 250;
 constexpr unsigned long EVENT_COOLDOWN_MS = 5000;
@@ -38,6 +36,7 @@ bool highCandidateActive = false;
 bool flashOn = false;
 bool waitingForCamera = false;
 bool hasAcceptedEvent = false;
+bool alarmMuted = false;
 
 unsigned long highCandidateStartMs = 0;
 unsigned long lastAcceptedEventMs = 0;
@@ -95,29 +94,31 @@ void drawStatus(bool force = false) {
   }
   lastStatusDrawMs = nowMs;
 
-  M5.Display.fillScreen(modeColor(mode));
+  const bool alarmActive = mode == SystemMode::AlarmTripped || mode == SystemMode::CameraError;
+  M5.Display.fillScreen(alarmActive ? RED : DARKGREEN);
   M5.Display.setTextColor(WHITE);
+
   M5.Display.setTextSize(2);
-  M5.Display.setCursor(8, 8);
-  M5.Display.printf("Mode: %s\n", modeName(mode));
+  M5.Display.setCursor(8, 10);
+  M5.Display.println(alarmActive ? "ALARM" : "MONITORING");
 
   M5.Display.setTextSize(1);
-  M5.Display.setCursor(8, 42);
-  M5.Display.printf("Device: %s\n", DEVICE_ID);
-  M5.Display.printf("Triggers: %lu\n", triggerCount);
-  M5.Display.printf("Ignored:  %lu\n", ignoredCount);
-  M5.Display.printf("Capture commands: %lu\n", captureCommandCount);
-  M5.Display.printf("Camera OK/Fail: %lu/%lu\n", cameraOkCount, cameraFailCount);
-  M5.Display.printf("Last: %s\n", lastAction.c_str());
-
-  M5.Display.setCursor(8, M5.Display.height() - 28);
-  if (mode == SystemMode::AlarmTripped) {
-    M5.Display.println("BtnA: disarm");
-  } else if (mode == SystemMode::Disarmed) {
-    M5.Display.println("BtnB: arm");
+  M5.Display.setCursor(8, 44);
+  M5.Display.printf("Sound: %s\n", alarmMuted ? "MUTED" : "ON");
+  if (!hasAcceptedEvent) {
+    M5.Display.println("Last trip: never");
   } else {
-    M5.Display.println("BtnA disarm | BtnB arm");
+    unsigned long elapsedSeconds = (nowMs - lastAcceptedEventMs) / 1000;
+    if (elapsedSeconds < 60) {
+      M5.Display.printf("Last trip: %lus ago\n", elapsedSeconds);
+    } else {
+      M5.Display.printf("Last trip: %lum ago\n", elapsedSeconds / 60);
+    }
   }
+  M5.Display.printf("Status: %s\n", lastAction.c_str());
+
+  M5.Display.setCursor(8, M5.Display.height() - 18);
+  M5.Display.println("A: ACK      B: MUTE");
 }
 
 void enterMode(SystemMode nextMode, const String &action) {
@@ -169,41 +170,8 @@ void handleCameraMotionMessage(const String &message) {
   hasAcceptedEvent = true;
   waitingForCamera = false;
 
-  enterMode(SystemMode::AlarmTripped, message);
+  enterMode(SystemMode::AlarmTripped, "Motion detected");
   Serial.printf("CAMERA_MOTION: trigger=%lu message=%s\n", triggerCount, message.c_str());
-}
-
-void pollPir() {
-  if (mode == SystemMode::Disarmed) {
-    lastPirLevel = digitalRead(PIR_PIN) == HIGH;
-    highCandidateActive = false;
-    return;
-  }
-
-  unsigned long nowMs = millis();
-  bool pirLevel = digitalRead(PIR_PIN) == HIGH;
-
-  if (pirLevel && !lastPirLevel) {
-    highCandidateActive = true;
-    highCandidateStartMs = nowMs;
-    Serial.println("PIR_EDGE: rising edge candidate.");
-  }
-
-  if (!pirLevel) {
-    highCandidateActive = false;
-  }
-
-  if (highCandidateActive && pirLevel && nowMs - highCandidateStartMs >= PIR_STABLE_HIGH_MS) {
-    highCandidateActive = false;
-
-    if (nowMs - lastAcceptedEventMs < EVENT_COOLDOWN_MS) {
-      handleIgnoredMotion("cooldown");
-    } else {
-      handleAcceptedMotion(nowMs);
-    }
-  }
-
-  lastPirLevel = pirLevel;
 }
 
 void pollCameraSerial() {
@@ -212,26 +180,30 @@ void pollCameraSerial() {
     if (ch == '\n' || ch == '\r') {
       cameraLine.trim();
       if (cameraLine.length() > 0) {
-        Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
-
-        if (cameraLine.startsWith(MOTION_MESSAGE) || cameraLine.startsWith(PIR_TRIGGERED_MESSAGE)) {
+        if (cameraLine.indexOf(MOTION_MESSAGE) >= 0 || cameraLine.indexOf(PIR_TRIGGERED_MESSAGE) >= 0) {
+          Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
           handleCameraMotionMessage(cameraLine);
         } else if (cameraLine.indexOf("CAPTURE_OK") >= 0 || cameraLine.indexOf("UPLOAD_OK") >= 0) {
+          Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
           cameraOkCount++;
           waitingForCamera = false;
-          lastAction = cameraLine;
+          lastAction = cameraLine.indexOf("UPLOAD_OK") >= 0 ? "Upload complete" : "Image captured";
           drawStatus(true);
         } else if (cameraLine.indexOf("FAIL") >= 0 || cameraLine.indexOf("ERROR") >= 0) {
+          Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
           cameraFailCount++;
           waitingForCamera = false;
-          enterMode(SystemMode::CameraError, cameraLine);
-        } else {
-          lastAction = cameraLine;
+          enterMode(SystemMode::CameraError, "Camera error");
+        } else if (cameraLine.indexOf("WIFI_OK") >= 0 || cameraLine.indexOf("Camera init OK") >= 0) {
+          Serial.printf("CAMERA_RX: %s\n", cameraLine.c_str());
+          lastAction = cameraLine.indexOf("WIFI_OK") >= 0 ? "Camera online" : "Camera ready";
           drawStatus(true);
         }
       }
       cameraLine = "";
-    } else if (cameraLine.length() < 96) {
+    } else if (ch >= 32 && ch <= 126 && cameraLine.length() < 96) {
+      // Status messages are line-oriented printable ASCII. Ignoring other
+      // bytes prevents a disconnected/noisy RX wire from flooding the UI.
       cameraLine += ch;
     }
   }
@@ -258,7 +230,7 @@ void updateAlarmPresentation() {
     drawStatus(true);
   }
 
-  if (nowMs - lastBeepMs >= ALARM_BEEP_INTERVAL_MS) {
+  if (!alarmMuted && nowMs - lastBeepMs >= ALARM_BEEP_INTERVAL_MS) {
     lastBeepMs = nowMs;
     const uint16_t alarmFrequency = flashOn ? 1600 : 2200;
     M5.Speaker.tone(alarmFrequency, 300);
@@ -283,16 +255,24 @@ void updateCooldown() {
 void handleButtons() {
   if (M5.BtnA.wasPressed()) {
     waitingForCamera = false;
-    enterMode(SystemMode::Disarmed, "Disarmed by BtnA");
-    M5.Speaker.tone(260, 120);
+    M5.Speaker.stop();
+    if (mode == SystemMode::AlarmTripped || mode == SystemMode::CameraError) {
+      enterMode(SystemMode::Armed, "Acknowledged");
+    } else {
+      lastAction = "No active alarm";
+      drawStatus(true);
+    }
   }
 
   if (M5.BtnB.wasPressed()) {
-    waitingForCamera = false;
-    lastAcceptedEventMs = 0;
-    hasAcceptedEvent = false;
-    enterMode(SystemMode::Armed, "Armed by BtnB");
-    M5.Speaker.tone(880, 120);
+    alarmMuted = !alarmMuted;
+    if (alarmMuted) {
+      M5.Speaker.stop();
+    } else {
+      M5.Speaker.tone(880, 120);
+    }
+    lastAction = alarmMuted ? "Alarm sound muted" : "Alarm sound enabled";
+    drawStatus(true);
   }
 }
 
@@ -311,12 +291,10 @@ void setup() {
   Serial.begin(115200);
   CameraSerial.begin(CAMERA_BAUD, SERIAL_8N1, CAMERA_RX_PIN, CAMERA_TX_PIN);
 
-  pinMode(PIR_PIN, INPUT_PULLDOWN);
-
   Serial.println();
   Serial.println("--- StickS3 Motion Assistant ---");
-  Serial.println("Camera U0T -> resistor -> G8/RX; optional G7/TX -> camera U0R.");
-  Serial.println("BtnA disarms. BtnB arms.");
+  Serial.println("Camera U0T at 9600 -> resistor -> G8/RX.");
+  Serial.println("BtnA acknowledges alarms. BtnB toggles local alarm sound.");
 
   enterMode(SystemMode::Armed, "Ready");
 }
@@ -325,7 +303,6 @@ void loop() {
   M5.update();
 
   handleButtons();
-  pollPir();
   pollCameraSerial();
   updateAlarmPresentation();
   updateCooldown();

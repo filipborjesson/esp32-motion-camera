@@ -42,6 +42,7 @@
 // one of the SD-card lines.
 constexpr int PIR_PIN = 13;
 constexpr int FLASH_LED_PIN = 4;
+constexpr uint32_t STATUS_BAUD = 9600;
 
 constexpr unsigned long PIR_STABLE_HIGH_MS = 250;
 constexpr unsigned long EVENT_COOLDOWN_MS = 5000;
@@ -302,7 +303,8 @@ void handleMotionEvent(unsigned long nowMs) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  // A lower rate is more reliable over the breadboard UART link to StickS3.
+  Serial.begin(STATUS_BAUD);
   delay(500);
 
   pinMode(FLASH_LED_PIN, OUTPUT);
