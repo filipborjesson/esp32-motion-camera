@@ -1,10 +1,10 @@
 #include <M5Unified.h>
 
 // StickS3 Hat2 bus wiring.
-// ESP32-CAM U0T/GPIO1 -> resistor -> StickS3 G8/RX
-// StickS3 G7/TX -> ESP32-CAM U0R/GPIO3 (optional command path)
-constexpr int CAMERA_TX_PIN = 7;
-constexpr int CAMERA_RX_PIN = 8;
+// ESP32-CAM U0T/GPIO1 -> resistor -> StickS3 G7/RX
+// StickS3 G8/TX -> ESP32-CAM U0R/GPIO3 (optional command path)
+constexpr int CAMERA_TX_PIN = 8;
+constexpr int CAMERA_RX_PIN = 7;
 constexpr uint32_t CAMERA_BAUD = 9600;
 
 constexpr unsigned long PIR_STABLE_HIGH_MS = 250;
@@ -293,7 +293,7 @@ void setup() {
 
   Serial.println();
   Serial.println("--- StickS3 Motion Assistant ---");
-  Serial.println("Camera U0T at 9600 -> resistor -> G8/RX.");
+  Serial.println("Camera U0T at 9600 -> resistor -> G7/RX.");
   Serial.println("BtnA acknowledges alarms. BtnB toggles local alarm sound.");
 
   enterMode(SystemMode::Armed, "Ready");

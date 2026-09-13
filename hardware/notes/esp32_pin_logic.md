@@ -8,8 +8,8 @@ This document explains the hardware configuration for the AI-Thinker ESP32-CAM m
 |:---|:---|:---|
 | 5V | Power input | Connects to the shared 5V rail from the M5StickS3 external 5V output. |
 | GND | Ground | Common return path for all signals. |
-| U0T / GPIO1 | UART TX | Sends status output to M5StickS3 G8 / RX through a resistor. |
-| U0R / GPIO3 | UART RX | Optional future command input from M5StickS3 G7 / TX. |
+| U0T / GPIO1 | UART TX | Sends status output to M5StickS3 G7 / RX through a resistor. |
+| U0R / GPIO3 | UART RX | Optional future command input from M5StickS3 G8 / TX. |
 | IO0 / GPIO0 | Boot mode | Must be grounded only while uploading code. |
 
 ## Power Logic: 5V Pin vs. 3.3V Pin
@@ -22,10 +22,10 @@ Use crossover wiring:
 
 | M5StickS3 | ESP32-CAM |
 |:---|:---|
-| G8 / RX | U0T / GPIO1 |
-| G7 / TX | U0R / GPIO3 |
+| G7 / RX | U0T / GPIO1 |
+| G8 / TX | U0R / GPIO3 |
 
-The current integration test only needs ESP32-CAM `U0T/GPIO1` to StickS3 `G8/RX`. The StickS3 controller sketch uses `Serial1` for this link, leaving USB `Serial` free for logs.
+The current integration test only needs ESP32-CAM `U0T/GPIO1` to StickS3 `G7/RX`. The StickS3 controller sketch uses `Serial1` for this link, leaving USB `Serial` free for logs.
 
 ## Flash Pin: IO0 / GPIO0
 
